@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Apuração Presidente 2026</title>
+<script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f6f8; --card: #ffffff; --ink: #14171c; --muted: #6b7280;
+    --line: #e3e6eb; --empty: #d5d9df; --track: #eceef2;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0f1216; --card: #181c22; --ink: #eef0f3; --muted: #9aa3ae;
+            --line: #2a3039; --empty: #3a414b; --track: #262c34; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 14px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+  .wrap { max-width: 1400px; margin: 0 auto; padding: 16px; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; }
+
+  /* Header */
+  header.card { padding: 18px 20px; }
+  .top { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; }
+  h1 { font-size: 18px; margin: 0; }
+  .status { color: var(--muted); font-size: 12px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .dot { width: 8px; height: 8px; border-radius: 50%; background: #16a34a; display: inline-block; margin-right: 6px; }
+  .dot.err { background: #dc2626; }
+  .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .seg button { border: 0; background: transparent; color: var(--ink); padding: 6px 12px; cursor: pointer; font: inherit; }
+  .seg button.on { background: var(--ink); color: var(--card); }
+
+  .overview { display: grid; grid-template-columns: 1fr 260px; gap: 24px; margin-top: 16px; align-items: center; }
+  .cands { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; }
+  .cand { display: flex; gap: 12px; align-items: center; padding: 10px; border-radius: 10px; border: 1px solid var(--line); }
+  .cand img { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; border: 3px solid; background: var(--track); }
+  .cand .nm { font-weight: 600; }
+  .cand .pt { color: var(--muted); font-size: 12px; }
+  .cand .pc { font-size: 26px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .cand .vt { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .cand.small { padding: 6px 10px; }
+  .cand.small img { width: 32px; height: 32px; border-width: 2px; }
+  .cand.small .pc { font-size: 16px; }
+  .others { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 8px; }
+  .bigbar { height: 14px; display: flex; border-radius: 7px; overflow: hidden; background: var(--track); margin-top: 14px; }
+  .bigbar div { height: 100%; transition: width .6s; }
+
+  .apur .lbl { color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .04em; }
+  .apur .val { font-size: 34px; font-weight: 700; font-variant-numeric: tabular-nums; }
+  .apur .sub { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+  .meter { height: 8px; background: var(--track); border-radius: 4px; overflow: hidden; margin: 6px 0; }
+  .meter div { height: 100%; background: var(--ink); transition: width .6s; }
+  .extra { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; margin-top: 10px; }
+  .extra div { font-size: 11px; color: var(--muted); }
+  .extra b { display: block; color: var(--ink); font-size: 13px; font-variant-numeric: tabular-nums; }
+
+  /* Map + table */
+  main { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 16px; margin-top: 16px; }
+  .mapbox { padding: 12px; position: relative; }
+  #map { width: 100%; height: auto; display: block; }
+  #map path { stroke: var(--card); stroke-width: 1; cursor: pointer; transition: fill .4s; }
+  #map path:hover { stroke: var(--ink); stroke-width: 2; }
+  #map .lbl { cursor: pointer; }
+  #map .lbl text { font-weight: 700; fill: #fff; text-anchor: middle;
+              paint-order: stroke; stroke: rgba(0,0,0,.4); stroke-width: 2.5px; stroke-linejoin: round; }
+  #map .lbl .sg { font-size: 11px; }
+  #map .lbl .pc { font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  #map .lbl .trk { fill: rgba(255,255,255,.35); }
+  #map .lbl .fil { fill: #fff; }
+  #map .lbl.call text { fill: var(--ink); stroke: none; }
+  #map .lbl.call .box { fill: var(--card); stroke-width: 1.5; }
+  #map .lbl.call .trk { fill: var(--track); }
+  #map .lbl.call .fil { fill: var(--ink); }
+  #map line.lead { stroke: var(--muted); stroke-width: 1; }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); padding: 4px 8px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px; border-radius: 2px;
+                         background: var(--c); margin-right: 6px; vertical-align: -1px; }
+  .legend .bhint::before { display: none; }
+  .ext { position: absolute; left: 20px; bottom: 20px; font-size: 12px; padding: 8px 10px; }
+
+  .tablebox { padding: 0; overflow: hidden; display: flex; flex-direction: column; }
+  .tablebox h2 { font-size: 14px; margin: 0; padding: 12px 14px; border-bottom: 1px solid var(--line); }
+  .tscroll { overflow: auto; max-height: 760px; }
+  table { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+  th, td { padding: 7px 10px; border-bottom: 1px solid var(--line); text-align: left; white-space: nowrap; }
+  th { font-size: 11px; color: var(--muted); font-weight: 600; text-transform: uppercase; position: sticky; top: 0;
+       background: var(--card); cursor: pointer; user-select: none; }
+  tr.hl td { background: var(--track); }
+  td.uf { font-weight: 700; }
+  .sw { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; }
+  .mini { width: 110px; height: 8px; background: var(--track); border-radius: 4px; display: flex; overflow: hidden; }
+  .num { text-align: right; }
+
+  .tip { position: fixed; pointer-events: none; z-index: 10; padding: 10px 12px; min-width: 230px;
+         box-shadow: 0 6px 24px rgba(0,0,0,.18); display: none; font-variant-numeric: tabular-nums; }
+  .tip h3 { margin: 0 0 4px; font-size: 14px; }
+  .tip .ap { color: var(--muted); font-size: 12px; margin-bottom: 8px; }
+  .tip .row { display: grid; grid-template-columns: 1fr auto; gap: 2px 10px; margin-bottom: 6px; font-size: 12px; }
+  .tip .bar { grid-column: 1 / -1; height: 6px; background: var(--track); border-radius: 3px; overflow: hidden; }
+  .tip .bar div { height: 100%; }
+
+  @media (max-width: 960px) {
+    .overview, main { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header class="card">
+    <div class="top">
+      <h1>Eleições 2026 · Presidente · <span id="turnoLbl"></span></h1>
+      <div class="status">
+        <div class="seg" id="turnoSeg">
+          <button data-t="1">1º turno</button><button data-t="2">2º turno</button>
+        </div>
+        <span><span class="dot" id="dot"></span><span id="upd">carregando…</span></span>
+        <span id="next"></span>
+      </div>
+    </div>
+    <div class="overview">
+      <div>
+        <div class="cands" id="cands"></div>
+        <div class="bigbar" id="bigbar"></div>
+      </div>
+      <div class="apur">
+        <div class="lbl">Urnas apuradas</div>
+        <div class="val" id="pst">–</div>
+        <div class="meter"><div id="pstBar" style="width:0"></div></div>
+        <div class="sub" id="pstAbs"></div>
+        <div class="extra">
+          <div>Comparecimento<b id="comp">–</b></div>
+          <div>Brancos<b id="bra">–</b></div>
+          <div>Nulos<b id="nul">–</b></div>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section class="card mapbox">
+      <div class="legend" id="legend"></div>
+      <svg id="map"></svg>
+      <div class="card ext" id="ext"></div>
+    </section>
+    <section class="card tablebox">
+      <h2>Por estado</h2>
+      <div class="tscroll"><table>
+        <thead><tr>
+          <th data-k="uf">UF</th><th data-k="pst" class="num">Apurado</th>
+          <th data-k="lead">Liderando</th><th data-k="margin" class="num">Vantagem</th><th>Votos</th>
+        </tr></thead>
+        <tbody id="tbody"></tbody>
+      </table></div>
+    </section>
+  </main>
+</div>
+<div class="card tip" id="tip"></div>
+
+<script>
+const BASE = "https://resultados.tse.jus.br/oficial/ele2026";
+const ELEICAO = { 1: "6257", 2: "6258" };
+const REFRESH_S = 30;
+const UFS = ["ac","al","am","ap","ba","ce","df","es","go","ma","mg","ms","mt","pa","pb","pe","pi","pr",
+             "rj","rn","ro","rr","rs","sc","se","sp","to"];
+const NOMES = { ac:"Acre", al:"Alagoas", am:"Amazonas", ap:"Amapá", ba:"Bahia", ce:"Ceará", df:"Distrito Federal",
+  es:"Espírito Santo", go:"Goiás", ma:"Maranhão", mg:"Minas Gerais", ms:"Mato Grosso do Sul", mt:"Mato Grosso",
+  pa:"Pará", pb:"Paraíba", pe:"Pernambuco", pi:"Piauí", pr:"Paraná", rj:"Rio de Janeiro", rn:"Rio Grande do Norte",
+  ro:"Rondônia", rr:"Roraima", rs:"Rio Grande do Sul", sc:"Santa Catarina", se:"Sergipe", sp:"São Paulo",
+  to:"Tocantins", zz:"Exterior" };
+
+// Cores fixas por número do candidato; demais recebem a paleta na ordem de votação
+const FIXED = { "13": "#d7263d", "22": "#1f5fbf" };
+const PALETTE = ["#e8a317", "#2a9d8f", "#8e44ad", "#e76f51", "#6d8a1e", "#c2185b", "#00838f", "#795548", "#5c6bc0", "#9e9d24"];
+const colorOf = {};
+
+let turno = +(location.hash.match(/turno=(\d)/)?.[1] || 2);
+let states = {};   // uf -> parsed
+let national = null;
+let sortKey = "uf", sortDir = 1;
+let countdown = REFRESH_S;
+
+const n = s => +String(s ?? "0").replace(",", ".");
+const fmtInt = v => v.toLocaleString("pt-BR");
+const fmtPct = (v, d = 2) => v.toLocaleString("pt-BR", { minimumFractionDigits: d, maximumFractionDigits: d }) + "%";
+
+function parse(d) {
+  const cands = [];
+  for (const a of d.carg[0].agr) for (const p of a.par) for (const c of p.cand)
+    cands.push({ n: c.n, nm: c.nmu, sq: c.sqcand, partido: p.sg, votos: n(c.vap), pct: n(c.pvapn), st: c.st });
+  cands.sort((a, b) => b.votos - a.votos);
+  return {
+    cands, hg: d.hg, dg: d.dg,
+    st: n(d.s.st), ts: n(d.s.ts), pst: n(d.s.pstn),
+    comp: n(d.e.pcn), bra: n(d.v.pvbn), nul: n(d.v.ptvnn),
+  };
+}
+
+async function load(uf) {
+  const e = ELEICAO[turno];
+  const r = await fetch(`${BASE}/${e}/dados/${uf}/${uf}-c0001-e00${e}-u.json`, { cache: "no-store" });
+  if (!r.ok) throw new Error(`${uf}: HTTP ${r.status}`);
+  return parse(await r.json());
+}
+
+function assignColors(cands) {
+  let i = Object.keys(colorOf).filter(k => !FIXED[k]).length;
+  for (const c of cands) if (!colorOf[c.n]) colorOf[c.n] = FIXED[c.n] || PALETTE[i++ % PALETTE.length];
+}
+
+function leaderOf(s) {
+  if (!s || !s.cands.length || s.cands[0].votos === 0) return null;
+  if (s.cands[1] && s.cands[0].votos === s.cands[1].votos) return null;
+  return s.cands[0];
+}
+
+async function refresh() {
+  try {
+    const all = await Promise.allSettled(["br", "zz", ...UFS].map(uf => load(uf).then(v => [uf, v])));
+    const fails = all.filter(r => r.status === "rejected");
+    for (const r of all) if (r.status === "fulfilled") {
+      const [uf, v] = r.value;
+      if (uf === "br") national = v; else states[uf] = v;
+    }
+    if (!national) throw fails[0]?.reason || new Error("sem dados");
+    assignColors(national.cands);
+    render();
+    document.getElementById("dot").className = "dot" + (fails.length ? " err" : "");
+    document.getElementById("upd").textContent =
+      `TSE: ${national.dg} ${national.hg}` + (fails.length ? ` · ${fails.length} arquivo(s) falharam` : "");
+  } catch (err) {
+    console.error(err);
+    document.getElementById("dot").className = "dot err";
+    document.getElementById("upd").textContent = "erro ao buscar dados do TSE: " + err.message;
+  }
+  countdown = REFRESH_S;
+}
+
+function candCard(c, small) {
+  const col = colorOf[c.n];
+  return `<div class="cand${small ? " small" : ""}">
+    <img src="${BASE}/${ELEICAO[turno]}/fotos/br/${c.sq}.jpeg" style="border-color:${col}" alt="" onerror="this.style.visibility='hidden'">
+    <div><div class="nm">${c.nm}</div><div class="pt">${c.n} · ${c.partido}${c.st && c.st !== "Não eleito" ? " · " + c.st : ""}</div>
+    <div class="pc" style="color:${col}">${fmtPct(c.pct)}</div><div class="vt">${fmtInt(c.votos)} votos</div></div></div>`;
+}
+
+function render() {
+  const b = national;
+  document.getElementById("turnoLbl").textContent = `${turno}º turno`;
+  document.querySelectorAll("#turnoSeg button").forEach(x => x.classList.toggle("on", +x.dataset.t === turno));
+
+  const main = b.cands.slice(0, turno === 2 ? 2 : 4), rest = b.cands.slice(main.length);
+  document.getElementById("cands").innerHTML = main.map(c => candCard(c)).join("") +
+    (rest.length ? `<div class="others">${rest.map(c => candCard(c, true)).join("")}</div>` : "");
+  document.getElementById("bigbar").innerHTML =
+    b.cands.map(c => `<div style="width:${c.pct}%;background:${colorOf[c.n]}" title="${c.nm} ${fmtPct(c.pct)}"></div>`).join("");
+
+  document.getElementById("pst").textContent = fmtPct(b.pst);
+  document.getElementById("pstBar").style.width = b.pst + "%";
+  document.getElementById("pstAbs").textContent = `${fmtInt(b.st)} de ${fmtInt(b.ts)} seções`;
+  document.getElementById("comp").textContent = fmtPct(b.comp);
+  document.getElementById("bra").textContent = fmtPct(b.bra);
+  document.getElementById("nul").textContent = fmtPct(b.nul);
+
+  const shown = b.cands.filter(c => UFS.some(uf => leaderOf(states[uf])?.n === c.n));
+  document.getElementById("legend").innerHTML =
+    shown.map(c => `<span style="--c:${colorOf[c.n]}">${c.nm} lidera</span>`).join("") +
+    `<span style="--c:var(--empty)">sem votos apurados / empate</span>` +
+    `<span class="bhint">barra sob a sigla = % de urnas apuradas</span>`;
+
+  paintMap();
+  renderTable();
+  const z = states.zz, zl = leaderOf(z);
+  document.getElementById("ext").innerHTML = z
+    ? `<b>Exterior</b> · ${fmtPct(z.pst)} apurado<br>${zl ? `<span class="sw" style="background:${colorOf[zl.n]}"></span>${zl.nm} ${fmtPct(zl.pct)}` : "sem votos apurados"}`
+    : "";
+}
+
+// ---------- Mapa ----------
+// Estados pequenos demais para o rótulo: vão para uma chamada no oceano, ligada por uma linha
+const CALLOUT = ["RN", "PB", "PE", "AL", "SE", "ES", "RJ"];
+const LBL_W = 46, LBL_GAP = 40;
+let mapPaths, mapLabels;
+async function initMap() {
+  const geo = await (await fetch("brasil-uf.geojson")).json();
+  const W = 800, H = 780, CX = W - 70;
+  const proj = d3.geoMercator().fitExtent([[10, 10], [W - 150, H - 10]], geo);
+  const path = d3.geoPath(proj);
+  const svg = d3.select("#map").attr("viewBox", `0 0 ${W} ${H}`);
+  mapPaths = svg.append("g").selectAll("path").data(geo.features).join("path")
+    .attr("d", path)
+    .attr("fill", "var(--empty)")
+    .on("mousemove", (ev, f) => showTip(ev, f.properties.sigla.toLowerCase()))
+    .on("mouseleave", hideTip);
+
+  // Posição de cada rótulo: centróide, ou coluna de chamadas à direita sem sobreposição
+  const pos = {};
+  const nudge = { GO: [-16, 14], DF: [6, -2], SC: [4, 2] };
+  for (const f of geo.features) {
+    const sg = f.properties.sigla, [x, y] = path.centroid(f), [dx, dy] = nudge[sg] || [0, 0];
+    pos[sg] = { ax: x, ay: y, x: x + dx, y: y + dy, call: CALLOUT.includes(sg) };
+  }
+  let lastY = -Infinity;
+  for (const sg of CALLOUT.slice().sort((a, b) => pos[a].ay - pos[b].ay)) {
+    const p = pos[sg];
+    p.y = Math.max(p.ay, lastY + LBL_GAP);
+    p.x = CX;
+    lastY = p.y;
+  }
+
+  const lines = svg.append("g").selectAll("line").data(geo.features.filter(f => pos[f.properties.sigla].call)).join("line")
+    .attr("class", "lead")
+    .attr("x1", f => pos[f.properties.sigla].ax).attr("y1", f => pos[f.properties.sigla].ay)
+    .attr("x2", f => pos[f.properties.sigla].x - LBL_W / 2 - 4).attr("y2", f => pos[f.properties.sigla].y);
+
+  mapLabels = svg.append("g").selectAll("g").data(geo.features).join("g")
+    .attr("class", f => "lbl" + (pos[f.properties.sigla].call ? " call" : ""))
+    .attr("transform", f => `translate(${pos[f.properties.sigla].x},${pos[f.properties.sigla].y})`)
+    .on("mousemove", (ev, f) => showTip(ev, f.properties.sigla.toLowerCase()))
+    .on("mouseleave", hideTip);
+  mapLabels.filter(f => pos[f.properties.sigla].call).append("rect")
+    .attr("class", "box").attr("x", -LBL_W / 2 - 4).attr("y", -15).attr("width", LBL_W + 8).attr("height", 30).attr("rx", 4);
+  mapLabels.append("text").attr("class", "sg").attr("y", -4).text(f => f.properties.sigla);
+  mapLabels.append("text").attr("class", "pc").attr("y", 7);
+  mapLabels.append("rect").attr("class", "trk").attr("x", -LBL_W / 2).attr("y", 10).attr("width", LBL_W).attr("height", 3).attr("rx", 1.5);
+  mapLabels.append("rect").attr("class", "fil").attr("x", -LBL_W / 2).attr("y", 10).attr("width", 0).attr("height", 3).attr("rx", 1.5);
+  mapLabels.append("title");
+}
+
+function paintMap() {
+  if (!mapPaths) return;
+  const info = f => {
+    const uf = f.properties.sigla.toLowerCase(), s = states[uf];
+    return { s, l: leaderOf(s) };
+  };
+  mapPaths.attr("fill", f => { const { l } = info(f); return l ? colorOf[l.n] : "var(--empty)"; });
+  mapLabels.select(".box").attr("stroke", f => { const { l } = info(f); return l ? colorOf[l.n] : "var(--empty)"; });
+  mapLabels.select(".pc").text(f => { const { l } = info(f); return l ? fmtPct(l.pct, 1) : "–"; });
+  mapLabels.select(".fil").transition().duration(600).attr("width", f => { const { s } = info(f); return s ? LBL_W * s.pst / 100 : 0; });
+  mapLabels.select("title").text(f => { const { s } = info(f); return s ? `${fmtPct(s.pst, 1)} das urnas apuradas` : ""; });
+}
+
+// ---------- Tooltip ----------
+const tip = document.getElementById("tip");
+function showTip(ev, uf) {
+  const s = states[uf];
+  if (!s) return;
+  tip.innerHTML = `<h3>${NOMES[uf]} (${uf.toUpperCase()})</h3>
+    <div class="ap">${fmtPct(s.pst)} das urnas apuradas · ${fmtInt(s.st)}/${fmtInt(s.ts)} seções</div>` +
+    s.cands.filter((c, i) => i < 5 || c.pct >= 1).map(c => `<div class="row"><span>${c.nm}</span>
+      <b>${fmtPct(c.pct)} · ${fmtInt(c.votos)}</b><div class="bar"><div style="width:${c.pct}%;background:${colorOf[c.n]}"></div></div></div>`).join("");
+  tip.style.display = "block";
+  const x = Math.min(ev.clientX + 16, innerWidth - tip.offsetWidth - 8);
+  const y = Math.min(ev.clientY + 16, innerHeight - tip.offsetHeight - 8);
+  tip.style.left = x + "px"; tip.style.top = y + "px";
+  document.querySelectorAll("#tbody tr").forEach(r => r.classList.toggle("hl", r.dataset.uf === uf));
+}
+function hideTip() {
+  tip.style.display = "none";
+  document.querySelectorAll("#tbody tr.hl").forEach(r => r.classList.remove("hl"));
+}
+
+// ---------- Tabela ----------
+function renderTable() {
+  const rows = UFS.filter(uf => states[uf]).map(uf => {
+    const s = states[uf], l = leaderOf(s);
+    return { uf, s, l, pst: s.pst, lead: l ? l.nm : "", margin: l && s.cands[1] ? l.pct - s.cands[1].pct : 0 };
+  });
+  rows.sort((a, b) => (a[sortKey] > b[sortKey] ? 1 : a[sortKey] < b[sortKey] ? -1 : 0) * sortDir);
+  document.getElementById("tbody").innerHTML = rows.map(r => `
+    <tr data-uf="${r.uf}">
+      <td class="uf">${r.uf.toUpperCase()}</td>
+      <td class="num">${fmtPct(r.pst, 1)}</td>
+      <td>${r.l ? `<span class="sw" style="background:${colorOf[r.l.n]}"></span>${r.l.nm} <span style="color:var(--muted)">${fmtPct(r.l.pct, 1)}</span>` : "–"}</td>
+      <td class="num">${r.l ? "+" + fmtPct(r.margin, 1).replace("%", " p.p.") : "–"}</td>
+      <td><div class="mini">${r.s.cands.map(c => `<div style="width:${c.pct}%;background:${colorOf[c.n]}"></div>`).join("")}</div></td>
+    </tr>`).join("");
+  document.querySelectorAll("#tbody tr").forEach(tr => {
+    tr.onmousemove = ev => showTip(ev, tr.dataset.uf);
+    tr.onmouseleave = hideTip;
+  });
+}
+
+document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
+  const k = th.dataset.k;
+  sortDir = sortKey === k ? -sortDir : (k === "uf" ? 1 : -1);
+  sortKey = k;
+  renderTable();
+});
+
+document.querySelectorAll("#turnoSeg button").forEach(btn => btn.onclick = () => {
+  turno = +btn.dataset.t;
+  location.hash = "turno=" + turno;
+  states = {}; national = null;
+  document.getElementById("upd").textContent = "carregando…";
+  refresh();
+});
+
+setInterval(() => {
+  countdown = Math.max(0, countdown - 1);
+  document.getElementById("next").textContent = `próxima atualização em ${countdown}s`;
+  if (countdown === 0) { countdown = REFRESH_S; refresh(); }
+}, 1000);
+
+initMap().then(refresh);
+</script>
+</body>
+</html>
