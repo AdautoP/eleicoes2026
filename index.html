@@ -28,6 +28,7 @@
   .status { color: var(--muted); font-size: 12px; display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
   .dot { width: 8px; height: 8px; border-radius: 50%; background: #16a34a; display: inline-block; margin-right: 6px; }
   .dot.err { background: #dc2626; }
+  .dot.wait { background: #f59e0b; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
   .seg button { border: 0; background: transparent; color: var(--ink); padding: 6px 12px; cursor: pointer; font: inherit; }
   .seg button.on { background: var(--ink); color: var(--card); }
@@ -161,7 +162,7 @@
 <script>
 const BASE = "https://resultados.tse.jus.br/oficial/ele2026";
 const ELEICAO = { 1: "6257", 2: "6258" };
-const REFRESH_S = 30;
+const REFRESH_S = 60;   // os arquivos do TSE mudam no máximo a cada ~53s
 const UFS = ["ac","al","am","ap","ba","ce","df","es","go","ma","mg","ms","mt","pa","pb","pe","pi","pr",
              "rj","rn","ro","rr","rs","sc","se","sp","to"];
 const NOMES = { ac:"Acre", al:"Alagoas", am:"Amazonas", ap:"Amapá", ba:"Bahia", ce:"Ceará", df:"Distrito Federal",
@@ -197,44 +198,103 @@ function parse(d) {
   };
 }
 
-async function load(uf) {
-  const e = ELEICAO[turno];
-  const r = await fetch(`${BASE}/${e}/dados/${uf}/${uf}-c0001-e00${e}-u.json`, { cache: "no-store" });
-  if (!r.ok) throw new Error(`${uf}: HTTP ${r.status}`);
-  return parse(await r.json());
-}
-
 function assignColors(cands) {
   let i = Object.keys(colorOf).filter(k => !FIXED[k]).length;
   for (const c of cands) if (!colorOf[c.n]) colorOf[c.n] = FIXED[c.n] || PALETTE[i++ % PALETTE.length];
 }
-
 function leaderOf(s) {
   if (!s || !s.cands.length || s.cands[0].votos === 0) return null;
   if (s.cands[1] && s.cands[0].votos === s.cands[1].votos) return null;
   return s.cands[0];
 }
 
-async function refresh() {
-  try {
-    const all = await Promise.allSettled(["br", "zz", ...UFS].map(uf => load(uf).then(v => [uf, v])));
-    const fails = all.filter(r => r.status === "rejected");
-    for (const r of all) if (r.status === "fulfilled") {
-      const [uf, v] = r.value;
-      if (uf === "br") national = v; else states[uf] = v;
+class RateLimited extends Error {
+  constructor(status, retryAfter) { super(`TSE pediu para aguardar (HTTP ${status})`); this.retryAfter = retryAfter; }
+}
+
+// Respeita o cache do próprio TSE (cache-control: max-age≈53s) em vez de forçar download novo
+async function getJSON(path) {
+  const r = await fetch(`${BASE}/${ELEICAO[turno]}/${path}`);
+  if (r.status === 429 || r.status === 503) throw new RateLimited(r.status, +r.headers.get("retry-after") || 0);
+  if (!r.ok) throw new Error(`${path}: HTTP ${r.status}`);
+  return r.json();
+}
+const load = uf => getJSON(`dados/${uf}/${uf}-c0001-e00${ELEICAO[turno]}-u.json`).then(parse);
+
+// Roda as tarefas com no máximo `limit` simultâneas; para tudo no primeiro 429
+async function pool(tasks, limit) {
+  const results = [];
+  let i = 0, stop = null;
+  async function worker() {
+    while (i < tasks.length && !stop) {
+      const k = i++;
+      try { results[k] = { ok: true, v: await tasks[k]() }; }
+      catch (e) { results[k] = { ok: false, e }; if (e instanceof RateLimited) stop = e; }
     }
-    if (!national) throw fails[0]?.reason || new Error("sem dados");
+  }
+  await Promise.all(Array.from({ length: limit }, worker));
+  if (stop) throw stop;
+  return results;
+}
+
+let seen = {};       // uf -> horário da última totalização já baixada (do índice do TSE)
+let gen = 0;         // descarta respostas de um turno anterior
+let busy = false;
+let backoff = 0;     // segundos extras de espera após 429
+
+async function refresh() {
+  if (busy) return;
+  busy = true;
+  const myGen = gen;
+  try {
+    // 1) Índice com o horário de atualização de cada UF: só baixa os estados que mudaram
+    let changed = UFS, stamps = null;
+    try {
+      const ab = await getJSON(`dados/br/br-e00${ELEICAO[turno]}-ab.json`);
+      const stamp = Object.fromEntries(ab.abr.map(x => [x.cdabr, `${x.dt} ${x.ht} ${x.s?.st}`]));
+      changed = UFS.filter(uf => !states[uf] || stamp[uf] !== seen[uf]);
+      stamps = stamp;
+    } catch (e) { if (e instanceof RateLimited) throw e; }
+
+    // 2) Brasil e exterior sempre (são 2 arquivos); estados só os alterados
+    const list = ["br", "zz", ...changed];
+    const res = await pool(list.map(uf => () => load(uf)), 4);
+    if (myGen !== gen) return;
+    let fails = 0, updated = 0;
+    res.forEach((r, k) => {
+      const uf = list[k];
+      if (!r.ok) { fails++; return; }
+      // Nunca troca o que está na tela por um arquivo vazio ou mais antigo (menos seções apuradas)
+      const prev = uf === "br" ? national : states[uf];
+      if (!r.v.cands.length || (prev && r.v.st < prev.st)) return;
+      if (uf === "br") national = r.v; else states[uf] = r.v;
+      if (UFS.includes(uf)) updated++;
+      if (stamps && stamps[uf]) seen[uf] = stamps[uf];
+    });
+    if (!national) throw res[0].e || new Error("sem dados");
+    backoff = 0;
     assignColors(national.cands);
     render();
-    document.getElementById("dot").className = "dot" + (fails.length ? " err" : "");
-    document.getElementById("upd").textContent =
-      `TSE: ${national.dg} ${national.hg}` + (fails.length ? ` · ${fails.length} arquivo(s) falharam` : "");
+    setStatus(fails ? "err" : "", `TSE: ${national.dg} ${national.hg} · ` + (fails
+      ? `${fails} arquivo(s) falharam · mostrando os últimos dados`
+      : `${updated} estado(s) com dados novos`));
   } catch (err) {
+    if (myGen !== gen) return;
     console.error(err);
-    document.getElementById("dot").className = "dot err";
-    document.getElementById("upd").textContent = "erro ao buscar dados do TSE: " + err.message;
+    if (err instanceof RateLimited) {
+      backoff = Math.min(300, Math.max(err.retryAfter, backoff ? backoff * 2 : REFRESH_S));
+      setStatus("wait", `TSE pediu para aguardar · mostrando os últimos dados · nova tentativa em ${REFRESH_S + backoff}s`);
+    } else {
+      setStatus("err", "erro ao buscar dados do TSE: " + err.message + (national ? " · mostrando os últimos dados" : ""));
+    }
+  } finally {
+    if (myGen === gen) { busy = false; countdown = REFRESH_S + backoff; }
   }
-  countdown = REFRESH_S;
+}
+
+function setStatus(kind, text) {
+  document.getElementById("dot").className = "dot" + (kind ? " " + kind : "");
+  document.getElementById("upd").textContent = text;
 }
 
 function candCard(c, small) {
@@ -393,15 +453,19 @@ document.querySelectorAll("th[data-k]").forEach(th => th.onclick = () => {
 document.querySelectorAll("#turnoSeg button").forEach(btn => btn.onclick = () => {
   turno = +btn.dataset.t;
   location.hash = "turno=" + turno;
-  states = {}; national = null;
+  states = {}; national = null; seen = {}; gen++; busy = false; backoff = 0;
   document.getElementById("upd").textContent = "carregando…";
   refresh();
 });
 
+// Pausa quando a aba está em segundo plano; ao voltar, atualiza se já passou da hora
 setInterval(() => {
+  const next = document.getElementById("next");
+  if (document.hidden) { next.textContent = "pausado (aba em segundo plano)"; return; }
+  if (busy) { next.textContent = "atualizando…"; return; }
   countdown = Math.max(0, countdown - 1);
-  document.getElementById("next").textContent = `próxima atualização em ${countdown}s`;
-  if (countdown === 0) { countdown = REFRESH_S; refresh(); }
+  next.textContent = `próxima atualização em ${countdown}s`;
+  if (countdown === 0) refresh();
 }, 1000);
 
 initMap().then(refresh);
