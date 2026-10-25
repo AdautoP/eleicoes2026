@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Apuração Presidente 2026</title>
 <script src="https://cdn.jsdelivr.net/npm/d3@7.9.0/dist/d3.min.js"></script>
+<script src="brasil-uf.js"></script>
 <style>
   :root {
     --bg: #f5f6f8; --card: #ffffff; --ink: #14171c; --muted: #6b7280;
@@ -282,7 +283,8 @@ const CALLOUT = ["RN", "PB", "PE", "AL", "SE", "ES", "RJ"];
 const LBL_W = 46, LBL_GAP = 40;
 let mapPaths, mapLabels;
 async function initMap() {
-  const geo = await (await fetch("brasil-uf.geojson")).json();
+  // Carregado via <script> para funcionar também abrindo o arquivo direto do disco (file://)
+  const geo = window.BRASIL_UF;
   const W = 800, H = 780, CX = W - 70;
   const proj = d3.geoMercator().fitExtent([[10, 10], [W - 150, H - 10]], geo);
   const path = d3.geoPath(proj);
